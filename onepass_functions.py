@@ -1,31 +1,31 @@
 import requests
 
-def getVaults(fqdn,key):
+def getOPVaults(fqdn,key):
     header = {}
     header['Content-Type'] = 'application/json;'
     header['Accept'] = '*/*'
     header['Authorization'] = 'Bearer '+key
     site = 'https://'+fqdn
     vaultsurl = site + '/v1/vaults'
-    vaults = requests.get(vaultsurl,headers=header,verify=False)
+    vaults = requests.get(vaultsurl,headers=header,verify=True)
     return vaults.json()
     
-def getSecrets(fqdn,vaultid,key):
+def getOPSecrets(fqdn,vaultid,key):
     header = {}
     header['Content-Type'] = 'application/json;'
     header['Accept'] = '*/*'
     header['Authorization'] = 'Bearer '+key
     site = 'https://'+fqdn
     secretsurl = site + '/v1/vaults/' + vaultid + '/items'
-    volumes = requests.get(secretsurl,headers=header,verify=False)
-    return volumes.json()
+    secrets = requests.get(secretsurl,headers=header,verify=True)
+    return secrets.json()
 
-def getSecret(fqdn,vaultid,secretid,key):
+def getOPSecret(fqdn,vaultid,secretid,key):
     header = {}
     header['Content-Type'] = 'application/json;'
     header['Accept'] = '*/*'
     header['Authorization'] = 'Bearer '+key
     site = 'https://'+fqdn
     secreturl = site + '/v1/vaults/' + vaultid + '/items/' + secretid
-    secret = requests.get(secreturl,headers=header,verify=False)
+    secret = requests.get(secreturl,headers=header,verify=True)
     return secret.json()
