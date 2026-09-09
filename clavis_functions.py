@@ -20,12 +20,12 @@ def getClavisSecret(fqdn,secretid,key):
     secret = requests.get(secreturl,headers=header,verify=True)
     return secret.json()
 
-def getClavisFolders(fqdn,key):
+def getClavisFolders(fqdn,id,key):
     header = {}
     header['Content-Type'] = 'application/json;'
     header['Accept'] = '*/*'
     header['Authorization'] = 'Bearer '+key
     site = 'https://'+fqdn
-    foldersurl = site + '/api/v1/folders'
+    foldersurl = site + '/api/v1/folders/' + str(id)
     folders = requests.get(foldersurl,headers=header,verify=True)
     return folders.json()
