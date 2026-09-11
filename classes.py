@@ -10,10 +10,9 @@ class secret:
         self.sections = [section]
         self.title = ''
         self.urls = []
-        self.vaultId = vault().id
-        #self.folderId = folder().id
+        self.vault = vault()
         self.folder = folder()
-
+        self.fields = []
     def buildTags(self):
         self.tags = self.folder.folderPath.strip('\\').split('\\')
 
@@ -29,8 +28,17 @@ class folder:
         self.folderPath = ''
         self.folderName = ''
         self.parentFolderId = 0
+        self.rootFolderId = 0
 
 class clavisSection:
     def __init__(self) -> None:
         self.id = 'qi5thupeodxuju6hxnbq3ixw2y'
         self.label = 0
+
+class secretField:
+    def __init__(self) -> None:
+        self.id = 'password'
+        self.type = 'CONCEALED'
+        self.label = 'password'
+        self.value = 'some_password'
+        self.purpose = 'PASSWORD'
