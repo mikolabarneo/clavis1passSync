@@ -8,7 +8,7 @@ def getClavisSecrets(fqdn,key,folderid=None, take=1000,skip=0):
     site = 'https://'+fqdn
     secretsurl = site + '/api/v2/secrets'+ '?take=' + str(take) + '&skip=' + str(skip)
     if folderid:
-        secretsurl += '&filter.folderId=' + str(folderid)
+        secretsurl += '&filter.folderId=' + str(folderid)+ '&filter.includeSubfolders=true'
     secrets = requests.get(secretsurl,headers=header,verify=True)
     if secrets.status_code != 200:
         return None
