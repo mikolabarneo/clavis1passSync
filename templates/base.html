@@ -136,6 +136,9 @@
             grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
             gap: 8px;
             align-items: start;
+            max-height: 60vh;
+            overflow-y: auto;
+            padding-right: 4px;
         }
         .op-item {
             border: 1px solid var(--border);
@@ -275,7 +278,12 @@
             color: var(--muted);
             font-size: 0.82rem;
         }
-        .tree { margin-top: 8px; }
+        .tree {
+            margin-top: 8px;
+            max-height: 60vh;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
         details.node {
             margin: 2px 0;
         }
