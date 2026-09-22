@@ -11,9 +11,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN useradd --system --create-home --shell /usr/sbin/nologin appuser \
+# Fixed numeric uid/gid: Kubernetes' runAsNonRoot check can only verify a
+# named user by resolving it against the pod's securityContext.runAsUser -
+# it can't run the image to look it up, so USER must be numeric here.
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid 1000 --create-home --shell /usr/sbin/nologin appuser \
     && chown -R appuser:appuser /app
-USER appuser
+USER 1000:1000
 
 EXPOSE 5000
 

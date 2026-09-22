@@ -28,15 +28,17 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: clavis1passsync-secret
+  namespace: clavis1pass
 type: Opaque
 stringData:
   FLASK_SECRET_KEY: "REPLACE_ME"
 ---
-# Step 2. Deployment.
+# Step 3. Deployment.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: clavis1passsync
+  namespace: clavis1pass
   labels:
     app: clavis1passsync
 spec:
@@ -51,10 +53,12 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
       containers:
         - name: clavis1passsync
           # Replace with your pushed image reference.
-          image: registry.shore.ox.ac.uk/onepass/clavis1passsync:latest
+          image: registry.shore.ox.ac.uk/onepass/clavis1pass:latest
           ports:
             - name: http
               containerPort: 5000
@@ -91,11 +95,12 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
 ---
-# Step 3. Service
+# Step 4. Service
 apiVersion: v1
 kind: Service
 metadata:
   name: clavis1passsync
+  namespace: clavis1pass
 spec:
   selector:
     app: clavis1passsync
@@ -104,7 +109,7 @@ spec:
       port: 80
       targetPort: http
 ---
-# Step 4. CNAME DNS record for the application.
+# Step 5. CNAME DNS record for the application.
 apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
@@ -115,14 +120,13 @@ spec:
   - dnsName: clavis1pass.shore.ox.ac.uk
     recordType: CNAME
     targets:
-    - csst-ns-ingress.shore.ox.ac.uk
+    - infra-ingress.shore.ox.ac.uk
 ---
-# Step 5. TLS cerificate for the website.
-# Option 1. HTTP challenge (a temporary container starts, listens on tcp/80 and then desposes)
+# Step 6. TLS cerificate for the website.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: clavis1pass-cert
+  name: clavis1pass-tls-cert
   namespace: clavis1pass
 spec:
   commonName: clavis1pass.shore.ox.ac.uk
@@ -131,27 +135,31 @@ spec:
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
-  secretName: clavis1pass-cert-secret
+  secretName: clavis1pass-tls-cert-secret
 ---
-# Step 6. HTTPProxy to expose the app service.
+# Step 7. HTTPProxy to expose the app service.
+#
+# No cert-manager/ingress-shim annotations here on purpose: the Certificate
+# in Step 6 already manages clavis1pass-tls-cert-secret explicitly. Adding
+# cert-manager.io/cluster-issuer (or tls-acme) here makes ingress-shim try to
+# manage the same certificate/secret too, and the two controllers fighting
+# over it is what produced the "object has been modified" retries and the
+# HTTP-01 self-check 404s. HTTPProxy also has no use for the
+# kubernetes.io/ingress.class or force-ssl-redirect Ingress annotations - TLS
+# and its redirect are controlled by virtualhost.tls below.
 kind: HTTPProxy
 apiVersion: projectcontour.io/v1
 metadata:
   name: clavis1pass-ingress
   namespace: clavis1pass
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    ingress.kubernetes.io/force-ssl-redirect: "true"
-    kubernetes.io/ingress.class: contour
-    kubernetes.io/tls-acme: "true"
 spec:
   virtualhost:
     fqdn: clavis1pass.shore.ox.ac.uk
     tls:
-      secretName: clavis1pass-cert-secret
+      secretName: clavis1pass-tls-cert-secret
   routes:
     - conditions:
       - prefix: /
       services:
-      - name: clavis1pass-svc
+      - name: clavis1passsync
         port: 80
