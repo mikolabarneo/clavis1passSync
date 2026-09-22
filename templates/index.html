@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+    <h1>Clavis → 1Password Sync</h1>
+    <p class="subtitle">Enter the connection details for the source and destination.</p>
+    <form method="post" action="{{ url_for('connect') }}">
+        <fieldset>
+            <legend>Clavis</legend>
+            <label for="clavisfqdn">Server address (FQDN)</label>
+            <input type="text" id="clavisfqdn" name="clavisfqdn" placeholder="clavis.example.com"
+                   value="{{ clavisfqdn }}" required>
+
+            <label for="claviskey">API token</label>
+            <input type="password" id="claviskey" name="claviskey" required>
+        </fieldset>
+
+        <fieldset>
+            <legend>1Password Connect</legend>
+            <label for="onepassfqdn">Connect server address (FQDN)</label>
+            <input type="text" id="onepassfqdn" name="onepassfqdn" placeholder="connect.example.com"
+                   value="{{ onepassfqdn }}" required>
+
+            <label for="onepasskey">API token</label>
+            <input type="password" id="onepasskey" name="onepasskey" required>
+        </fieldset>
+
+        <button type="submit">Connect</button>
+    </form>
+{% endblock %}

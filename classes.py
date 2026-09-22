@@ -1,3 +1,5 @@
+CLAVIS_TAG_PREFIX = 'clavisId:'
+
 class secret:
     def __init__(self) -> None:
         self.clavisId = 0
@@ -15,6 +17,7 @@ class secret:
         self.fields = []
     def buildTags(self):
         self.tags = self.folder.folderPath.strip('\\').split('\\')
+        self.tags.append(CLAVIS_TAG_PREFIX + str(self.clavisId))
 
     def toJson(self):
         return {

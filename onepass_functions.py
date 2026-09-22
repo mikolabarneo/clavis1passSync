@@ -1,7 +1,7 @@
 import json
 
 import requests
-from classes import secret
+from classes import CLAVIS_TAG_PREFIX, secret
 
 def getOPVaults(fqdn,key):
     header = {}
@@ -11,8 +11,10 @@ def getOPVaults(fqdn,key):
     site = 'https://'+fqdn
     vaultsurl = site + '/v1/vaults'
     vaults = requests.get(vaultsurl,headers=header,verify=True)
+    if vaults.status_code != 200:
+        return None
     return vaults.json()
-    
+
 def getOPSecrets(fqdn,vaultid,key):
     header = {}
     header['Content-Type'] = 'application/json;'
@@ -21,6 +23,8 @@ def getOPSecrets(fqdn,vaultid,key):
     site = 'https://'+fqdn
     secretsurl = site + '/v1/vaults/' + vaultid + '/items'
     secrets = requests.get(secretsurl,headers=header,verify=True)
+    if secrets.status_code != 200:
+        return None
     return secrets.json()
 
 def getOPSecret(fqdn,vaultid,secretid,key):
@@ -52,13 +56,11 @@ def createUpdateOPSecret(fqdn,vaultid,key,secret):
     return result
 
 def mapExistingSecrets(fqdn,vaultid,key):
-    existingSecrets = getOPSecrets(fqdn,vaultid,key)
+    existingSecrets = getOPSecrets(fqdn,vaultid,key) or []
     secretMap = {}
-    for secret in existingSecrets:
-        secretDetail = getOPSecret(fqdn,vaultid,secret['id'],key)
-        if 'sections' in secretDetail:
-            for section in secretDetail['sections']:
-                if section['id'] == 'clavisId':
-                    clavisId = section['label']
-                    secretMap[clavisId] = secretDetail['id'] 
+    for item in existingSecrets:
+        for tag in item.get('tags') or []:
+            if tag.startswith(CLAVIS_TAG_PREFIX):
+                secretMap[tag[len(CLAVIS_TAG_PREFIX):]] = item['id']
+                break
     return secretMap

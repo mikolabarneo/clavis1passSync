@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+    <h1>Connected</h1>
+    <p class="subtitle">Credentials are stored in the session.</p>
+    <dl>
+        <dt>Clavis</dt>
+        <dd>{{ clavisfqdn }}</dd>
+        <dt>1Password Connect</dt>
+        <dd>{{ onepassfqdn }}</dd>
+    </dl>
+    <a class="back" href="{{ url_for('tree') }}">Show Clavis tree →</a>
+
+    <form class="inline" method="post" action="{{ url_for('logout') }}">
+        <button type="submit">Log out</button>
+    </form>
+{% endblock %}

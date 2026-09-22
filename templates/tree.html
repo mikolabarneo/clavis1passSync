@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+{% block card_class %} wide{% endblock %}
+{% block content %}
+    <div class="action-toolbar">
+        <button type="button" id="apply-match" title="Overlay the selected Clavis items onto the 1Password list">Apply ›</button>
+        <button type="button" id="reset-match" title="Clear the overlay">‹‹ Reset</button>
+        <button type="button" id="sync-btn" class="sync-button" title="Create/update items in 1Password">Sync</button>
+    </div>
+
+    <div class="split">
+    <div class="tree-col">
+    <h1>Clavis Structure</h1>
+    <p class="subtitle">{{ clavisfqdn }}</p>
+
+    <div class="tree-toolbar">
+        <button type="button" id="expand-all">Expand all</button>
+        <button type="button" id="collapse-all">Collapse all</button>
+        <span class="selected-count" id="selected-count">Selected: 0</span>
+    </div>
+
+    {% macro render_node(node) %}
+        <details class="node" open>
+            <summary>
+                <input type="checkbox" class="tree-checkbox" data-type="folder"
+                       data-id="{{ node.id if node.id is not none else 'uncategorized' }}">
+                <span class="node-label">{{ node.name }}</span>
+                <span class="count">{{ node.children|length + node.secrets|length }}</span>
+            </summary>
+            <div class="node-body">
+                {% for child in node.children %}
+                    {{ render_node(child) }}
+                {% endfor %}
+                {% if node.secrets %}
+                    <ul class="items">
+                        {% for item in node.secrets %}
+                            <li>
+                                <label>
+                                    <input type="checkbox" class="tree-checkbox" data-type="secret"
+                                           data-id="{{ item.id }}">
+                                    {{ item.name }}
+                                </label>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+            </div>
+        </details>
+    {% endmacro %}
+
+    <div class="tree" id="clavis-tree">
+        {% if roots %}
+            {% for root in roots %}
+                {{ render_node(root) }}
+            {% endfor %}
+        {% else %}
+            <p class="subtitle">No folders found.</p>
+        {% endif %}
+    </div>
+
+    <a class="back" href="{{ url_for('dashboard') }}">← Back</a>
+    </div>
+
+    <div class="op-col">
+        <h1>1Password</h1>
+        <p class="subtitle">1Password has no folders — tags take their place.</p>
+
+        <div class="op-vault-row">
+            <select id="op-vault-select">
+                <option value="">— select a vault —</option>
+                {% for v in vaults %}
+                    <option value="{{ v.id }}">{{ v.name }}</option>
+                {% endfor %}
+            </select>
+            <span class="op-items-count" id="op-items-count"></span>
+        </div>
+
+        <div id="op-items" class="op-items"></div>
+        <p class="op-hint" id="op-hint">Select a vault to see its items.</p>
+    </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var treeEl = document.getElementById('clavis-tree');
+    if (!treeEl) return;
+
+    var expandBtn = document.getElementById('expand-all');
+    var collapseBtn = document.getElementById('collapse-all');
+    var countEl = document.getElementById('selected-count');
+
+    expandBtn.addEventListener('click', function () {
+        treeEl.querySelectorAll('details.node').forEach(function (d) { d.open = true; });
+    });
+    collapseBtn.addEventListener('click', function () {
+        treeEl.querySelectorAll('details.node').forEach(function (d) { d.open = false; });
+    });
+
+    function updateCount() {
+        var selected = treeEl.querySelectorAll('input.tree-checkbox[data-type="secret"]:checked').length;
+        countEl.textContent = 'Selected: ' + selected;
+    }
+
+    function setDescendants(detailsEl, checked) {
+        var body = detailsEl.querySelector(':scope > .node-body');
+        if (!body) return;
+        body.querySelectorAll('input.tree-checkbox').forEach(function (cb) {
+            cb.checked = checked;
+            cb.indeterminate = false;
+        });
+    }
+
+    // Recomputes the checked/indeterminate state of detailsEl's own folder
+    // checkbox from its descendants, then repeats for each ancestor folder.
+    function recomputeAndBubble(detailsEl) {
+        while (detailsEl) {
+            var body = detailsEl.querySelector(':scope > .node-body');
+            var ownCheckbox = detailsEl.querySelector(':scope > summary > input.tree-checkbox');
+            if (body && ownCheckbox) {
+                var descendants = body.querySelectorAll('input.tree-checkbox');
+                if (descendants.length > 0) {
+                    var checkedCount = 0;
+                    descendants.forEach(function (cb) { if (cb.checked) checkedCount++; });
+                    if (checkedCount === 0) {
+                        ownCheckbox.checked = false;
+                        ownCheckbox.indeterminate = false;
+                    } else if (checkedCount === descendants.length) {
+                        ownCheckbox.checked = true;
+                        ownCheckbox.indeterminate = false;
+                    } else {
+                        ownCheckbox.checked = false;
+                        ownCheckbox.indeterminate = true;
+                    }
+                }
+            }
+            var parentBody = detailsEl.parentElement;
+            if (!parentBody || !parentBody.classList.contains('node-body')) break;
+            detailsEl = parentBody.closest('details.node');
+        }
+    }
+
+    treeEl.querySelectorAll('input.tree-checkbox').forEach(function (cb) {
+        cb.addEventListener('click', function (e) { e.stopPropagation(); });
+        cb.addEventListener('change', function () {
+            var detailsEl = cb.closest('details.node');
+            if (cb.dataset.type === 'folder') {
+                setDescendants(detailsEl, cb.checked);
+            }
+            recomputeAndBubble(detailsEl);
+            updateCount();
+        });
+    });
+
+    updateCount();
+})();
+
+(function () {
+    var select = document.getElementById('op-vault-select');
+    var itemsEl = document.getElementById('op-items');
+    var hintEl = document.getElementById('op-hint');
+    var itemsCountEl = document.getElementById('op-items-count');
+    if (!select) return;
+
+    function renderItems(items) {
+        itemsEl.innerHTML = '';
+        itemsCountEl.textContent = items.length + (items.length === 1 ? ' item' : ' items');
+        if (items.length === 0) {
+            hintEl.textContent = 'This vault has no items.';
+            hintEl.hidden = false;
+            return;
+        }
+        hintEl.hidden = true;
+        items.forEach(function (item) {
+            var row = document.createElement('div');
+            row.className = 'op-item';
+            row.dataset.opId = item.id;
+
+            var title = document.createElement('div');
+            title.className = 'op-item-title';
+            title.textContent = item.title;
+            row.appendChild(title);
+
+            if (item.tags && item.tags.length > 0) {
+                var tagsEl = document.createElement('div');
+                tagsEl.className = 'op-tags';
+                item.tags.forEach(function (tag) {
+                    var tagEl = document.createElement('span');
+                    tagEl.className = 'op-tag';
+                    tagEl.textContent = tag;
+                    tagsEl.appendChild(tagEl);
+                });
+                row.appendChild(tagsEl);
+            }
+
+            itemsEl.appendChild(row);
+        });
+    }
+
+    function loadItems(vaultId) {
+        hintEl.textContent = 'Loading…';
+        hintEl.hidden = false;
+
+        return fetch('/op/items/' + encodeURIComponent(vaultId))
+            .then(function (r) {
+                if (!r.ok) throw new Error('request failed');
+                return r.json();
+            })
+            .then(renderItems)
+            .catch(function () {
+                itemsCountEl.textContent = '';
+                hintEl.textContent = 'Failed to load the vault items.';
+                hintEl.hidden = false;
+            });
+    }
+
+    select.addEventListener('change', function () {
+        var vaultId = select.value;
+        itemsEl.innerHTML = '';
+        itemsCountEl.textContent = '';
+        if (!vaultId) {
+            hintEl.textContent = 'Select a vault to see its items.';
+            hintEl.hidden = false;
+            return;
+        }
+        loadItems(vaultId);
+    });
+
+    var applyBtn = document.getElementById('apply-match');
+    var resetBtn = document.getElementById('reset-match');
+
+    function resetOverlay() {
+        itemsEl.querySelectorAll('.op-item-new').forEach(function (el) { el.remove(); });
+        itemsEl.querySelectorAll('.op-item-status').forEach(function (el) { el.remove(); });
+        itemsEl.querySelectorAll('.op-item-match').forEach(function (el) {
+            el.classList.remove('op-item-match');
+            delete el.dataset.clavisId;
+        });
+    }
+
+    function addStatus(card, text) {
+        var status = document.createElement('span');
+        status.className = 'op-item-status';
+        status.textContent = text;
+        card.appendChild(status);
+    }
+
+    applyBtn.addEventListener('click', function () {
+        var vaultId = select.value;
+        if (!vaultId) {
+            hintEl.textContent = 'Select a vault first.';
+            hintEl.hidden = false;
+            return;
+        }
+
+        var selectedCheckboxes = document.querySelectorAll(
+            '#clavis-tree input.tree-checkbox[data-type="secret"]:checked'
+        );
+        if (selectedCheckboxes.length === 0) {
+            hintEl.textContent = 'Select items in the Clavis tree.';
+            hintEl.hidden = false;
+            return;
+        }
+
+        var selected = Array.from(selectedCheckboxes).map(function (cb) {
+            return { id: cb.dataset.id, name: cb.closest('label').textContent.trim() };
+        });
+
+        fetch('/op/match', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vault_id: vaultId, clavis_ids: selected.map(function (s) { return s.id; }) }),
+        })
+            .then(function (r) {
+                if (!r.ok) throw new Error('request failed');
+                return r.json();
+            })
+            .then(function (result) {
+                resetOverlay();
+                selected.forEach(function (s) {
+                    var opId = result.matched[s.id];
+                    if (opId) {
+                        var card = itemsEl.querySelector('.op-item[data-op-id="' + CSS.escape(opId) + '"]');
+                        if (card) {
+                            card.classList.add('op-item-match');
+                            card.dataset.clavisId = s.id;
+                            addStatus(card, 'will be updated');
+                        }
+                        return;
+                    }
+                    var card = document.createElement('div');
+                    card.className = 'op-item op-item-new';
+                    card.dataset.clavisId = s.id;
+                    var title = document.createElement('div');
+                    title.className = 'op-item-title';
+                    title.textContent = s.name;
+                    card.appendChild(title);
+                    addStatus(card, 'will be created');
+                    itemsEl.appendChild(card);
+                });
+            })
+            .catch(function () {
+                hintEl.textContent = 'Failed to match against 1Password.';
+                hintEl.hidden = false;
+            });
+    });
+
+    resetBtn.addEventListener('click', resetOverlay);
+
+    var syncBtn = document.getElementById('sync-btn');
+
+    syncBtn.addEventListener('click', function () {
+        var vaultId = select.value;
+        if (!vaultId) {
+            hintEl.textContent = 'Select a vault first.';
+            hintEl.hidden = false;
+            return;
+        }
+
+        var newCards = itemsEl.querySelectorAll('.op-item-new');
+        var matchCards = itemsEl.querySelectorAll('.op-item-match');
+        if (newCards.length === 0 && matchCards.length === 0) {
+            hintEl.textContent = 'Nothing to sync — click "Apply" first.';
+            hintEl.hidden = false;
+            return;
+        }
+
+        var kindByClavisId = {};
+        newCards.forEach(function (c) { kindByClavisId[c.dataset.clavisId] = 'create'; });
+        matchCards.forEach(function (c) { kindByClavisId[c.dataset.clavisId] = 'update'; });
+        var clavisIds = Object.keys(kindByClavisId);
+
+        syncBtn.disabled = true;
+        syncBtn.textContent = 'Syncing…';
+        hintEl.textContent = 'Syncing…';
+        hintEl.hidden = false;
+
+        fetch('/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vault_id: vaultId, clavis_ids: clavisIds }),
+        })
+            .then(function (r) {
+                if (!r.ok) throw new Error('request failed');
+                return r.json();
+            })
+            .then(function (data) {
+                var created = 0, updated = 0, failed = 0;
+                data.results.forEach(function (res) {
+                    if (!res.ok) { failed++; return; }
+                    if (kindByClavisId[res.id] === 'create') created++; else updated++;
+                });
+                var summary = 'Done: ' + created + ' created, ' + updated + ' updated';
+                if (failed > 0) summary += ', ' + failed + ' failed';
+                hintEl.textContent = summary;
+                hintEl.hidden = false;
+                return loadItems(vaultId);
+            })
+            .catch(function () {
+                hintEl.textContent = 'Failed to sync.';
+                hintEl.hidden = false;
+            })
+            .finally(function () {
+                syncBtn.disabled = false;
+                syncBtn.textContent = 'Sync';
+            });
+    });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Clavis → 1Password Sync{% endblock %}</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f5f6f8;
+            --card: #ffffff;
+            --border: #dfe3e8;
+            --text: #1f2430;
+            --muted: #6b7280;
+            --accent: #2f6fed;
+            --accent-hover: #244fb5;
+            --error-bg: #fdecea;
+            --error-text: #b3261e;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 24px;
+        }
+        .card {
+            width: 100%;
+            max-width: 440px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+        }
+        .card.wide {
+            max-width: 1280px;
+        }
+        .split {
+            display: flex;
+            gap: 24px;
+            align-items: flex-start;
+        }
+        .split > .tree-col {
+            flex: 1 1 0;
+            min-width: 0;
+            max-width: 460px;
+        }
+        .split > .op-col {
+            flex: 0 0 580px;
+            border-left: 1px solid var(--border);
+            padding-left: 24px;
+        }
+        .action-toolbar {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        .action-toolbar button {
+            width: auto;
+            padding: 8px 16px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .action-toolbar #apply-match,
+        .action-toolbar #reset-match {
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .action-toolbar #apply-match:hover,
+        .action-toolbar #reset-match:hover {
+            background: var(--bg);
+        }
+        .action-toolbar #sync-btn {
+            margin-left: auto;
+        }
+        @media (max-width: 720px) {
+            .split { flex-direction: column; }
+            .split > .op-col {
+                flex: 1 1 auto;
+                width: 100%;
+                border-left: none;
+                border-top: 1px solid var(--border);
+                padding-left: 0;
+                padding-top: 20px;
+            }
+            .action-toolbar #sync-btn {
+                margin-left: 0;
+                width: 100%;
+            }
+        }
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.9rem;
+            background: #fff;
+            color: var(--text);
+        }
+        .op-vault-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .op-vault-row select {
+            width: auto;
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        .op-items-count {
+            flex: none;
+            color: var(--muted);
+            font-size: 0.8rem;
+            white-space: nowrap;
+        }
+        select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.15);
+        }
+        .op-items {
+            margin-top: 16px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 8px;
+            align-items: start;
+        }
+        .op-item {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 10px;
+        }
+        .op-item .op-item-title {
+            font-size: 0.88rem;
+            font-weight: 500;
+        }
+        .op-tags {
+            margin-top: 6px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .op-tag {
+            font-size: 0.72rem;
+            color: var(--accent);
+            background: rgba(47, 111, 237, 0.1);
+            border-radius: 10px;
+            padding: 1px 8px;
+        }
+        .sync-button:disabled {
+            opacity: 0.6;
+            cursor: default;
+        }
+        .op-hint {
+            color: var(--muted);
+            font-size: 0.85rem;
+            margin-top: 16px;
+        }
+        .op-item.op-item-match {
+            background: #fff8e1;
+            border-color: #e0c34c;
+        }
+        .op-item.op-item-new {
+            background: #e8f7ec;
+            border-color: #34a853;
+        }
+        .op-item-status {
+            display: block;
+            margin-top: 4px;
+            font-size: 0.72rem;
+            font-weight: 500;
+        }
+        .op-item-match .op-item-status { color: #8a6d1d; }
+        .op-item-new .op-item-status { color: #1e7e34; }
+        h1 {
+            font-size: 1.25rem;
+            margin: 0 0 4px;
+        }
+        p.subtitle {
+            color: var(--muted);
+            margin: 0 0 24px;
+            font-size: 0.9rem;
+        }
+        fieldset {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin: 0 0 20px;
+            padding: 16px;
+        }
+        legend {
+            padding: 0 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--muted);
+        }
+        label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 500;
+            margin: 12px 0 6px;
+        }
+        label:first-of-type { margin-top: 0; }
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            font-size: 0.95rem;
+            background: #fff;
+            color: var(--text);
+        }
+        input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.15);
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            background: var(--accent);
+            color: #fff;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button:hover { background: var(--accent-hover); }
+        .flash {
+            padding: 10px 12px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            font-size: 0.88rem;
+        }
+        .flash.error {
+            background: var(--error-bg);
+            color: var(--error-text);
+        }
+        dl { margin: 0; }
+        dt { color: var(--muted); font-size: 0.82rem; margin-top: 12px; }
+        dt:first-child { margin-top: 0; }
+        dd { margin: 2px 0 0; font-size: 0.95rem; word-break: break-all; }
+        form.inline { margin-top: 24px; }
+
+        .tree-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .tree-toolbar button {
+            width: auto;
+            padding: 6px 12px;
+            font-size: 0.82rem;
+            font-weight: 500;
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .tree-toolbar button:hover { background: var(--bg); }
+        .tree-toolbar .selected-count {
+            margin-left: auto;
+            color: var(--muted);
+            font-size: 0.82rem;
+        }
+        .tree { margin-top: 8px; }
+        details.node {
+            margin: 2px 0;
+        }
+        details.node summary {
+            cursor: pointer;
+            list-style: none;
+            padding: 4px 6px;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        input.tree-checkbox {
+            flex: none;
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+            accent-color: var(--accent);
+        }
+        details.node summary::-webkit-details-marker { display: none; }
+        details.node summary::before {
+            content: '▸';
+            color: var(--muted);
+            font-size: 0.75rem;
+            transition: transform 0.1s;
+        }
+        details.node[open] > summary::before {
+            transform: rotate(90deg);
+        }
+        details.node summary:hover { background: var(--bg); }
+        .count {
+            margin-left: auto;
+            color: var(--muted);
+            font-size: 0.75rem;
+            background: var(--bg);
+            border-radius: 10px;
+            padding: 1px 8px;
+        }
+        .node-body {
+            margin-left: 20px;
+            padding-left: 12px;
+            border-left: 1px solid var(--border);
+        }
+        ul.items {
+            list-style: none;
+            margin: 2px 0;
+            padding: 0;
+        }
+        ul.items li {
+            padding: 4px 6px;
+            font-size: 0.88rem;
+            color: var(--text);
+        }
+        ul.items li label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0;
+            font-size: inherit;
+            font-weight: normal;
+            cursor: pointer;
+        }
+        a.back {
+            display: inline-block;
+            margin-top: 20px;
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.88rem;
+        }
+        a.back:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="card{% block card_class %}{% endblock %}">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </div>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
