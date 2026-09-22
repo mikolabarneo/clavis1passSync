@@ -10,7 +10,7 @@ metadata:
   name: clavis1passsync
 spec:
   virtualhost:
-    fqdn: clavis1passsync.example.org
+    fqdn: one-pass-sync.shore.ox.ac.uk
     tls:
       secretName: clavis1passsync-tls
   routes:

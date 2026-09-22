@@ -1,0 +1,157 @@
+
+---
+# Step 1. Namespace creation.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: clavis1pass
+  labels:
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/warn-version: latest
+---
+# Step 2. Secret creation.
+# Example only - do not apply as-is or commit a real secret to git.
+#
+# Generate a real key with: openssl rand -hex 32
+# Then either apply a copy of this file with the value filled in, or create
+# the secret imperatively so the value never touches a file on disk:
+#   kubectl create secret generic clavis1passsync-secret \
+#     --from-literal=FLASK_SECRET_KEY="$(openssl rand -hex 32)"
+#
+# Every replica must share the same key (see app.py) - a per-pod key would
+# break sessions randomly depending on which pod handles a request.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: clavis1passsync-secret
+type: Opaque
+stringData:
+  FLASK_SECRET_KEY: "REPLACE_ME"
+---
+# Step 2. Deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clavis1passsync
+  labels:
+    app: clavis1passsync
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clavis1passsync
+  template:
+    metadata:
+      labels:
+        app: clavis1passsync
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: clavis1passsync
+          # Replace with your pushed image reference.
+          image: registry.shore.ox.ac.uk/onepass/clavis1passsync:latest
+          ports:
+            - name: http
+              containerPort: 5000
+          env:
+            - name: FLASK_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: clavis1passsync-secret
+                  key: FLASK_SECRET_KEY
+            # Requires the HTTPProxy's virtualhost.tls to be configured -
+            # otherwise browsers will silently drop the session cookie.
+            - name: SESSION_COOKIE_SECURE
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+---
+# Step 3. Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: clavis1passsync
+spec:
+  selector:
+    app: clavis1passsync
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Step 4. CNAME DNS record for the application.
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: clavis1pass-cname-record
+  namespace: clavis1pass
+spec:
+  endpoints:
+  - dnsName: clavis1pass.shore.ox.ac.uk
+    recordType: CNAME
+    targets:
+    - csst-ns-ingress.shore.ox.ac.uk
+---
+# Step 5. TLS cerificate for the website.
+# Option 1. HTTP challenge (a temporary container starts, listens on tcp/80 and then desposes)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: clavis1pass-cert
+  namespace: clavis1pass
+spec:
+  commonName: clavis1pass.shore.ox.ac.uk
+  dnsNames:
+  - clavis1pass.shore.ox.ac.uk
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  secretName: clavis1pass-cert-secret
+---
+# Step 6. HTTPProxy to expose the app service.
+kind: HTTPProxy
+apiVersion: projectcontour.io/v1
+metadata:
+  name: clavis1pass-ingress
+  namespace: clavis1pass
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    ingress.kubernetes.io/force-ssl-redirect: "true"
+    kubernetes.io/ingress.class: contour
+    kubernetes.io/tls-acme: "true"
+spec:
+  virtualhost:
+    fqdn: clavis1pass.shore.ox.ac.uk
+    tls:
+      secretName: clavis1pass-cert-secret
+  routes:
+    - conditions:
+      - prefix: /
+      services:
+      - name: clavis1pass-svc
+        port: 80
