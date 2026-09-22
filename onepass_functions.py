@@ -33,14 +33,32 @@ def getOPSecret(fqdn,vaultid,secretid,key):
     secret = requests.get(secreturl,headers=header,verify=True)
     return secret.json()
 
-def createOPSecret(fqdn,vaultid,key,secret):
+def createUpdateOPSecret(fqdn,vaultid,key,secret):
+    secretMap = mapExistingSecrets(fqdn,vaultid,key)
     header = {}
     header['Content-Type'] = 'application/json;'
     header['Accept'] = '*/*'
     header['Authorization'] = 'Bearer '+key
     body = secret.toJson()
     site = 'https://'+fqdn
-    secreturl = site + '/v1/vaults/' + vaultid + '/items'
-    print(json.dumps(body, indent=4))
-    result = requests.post(secreturl,headers=header,json=body,verify=True)
+    if str(secret.clavisId) in secretMap:
+        secretid = secretMap[str(secret.clavisId)]
+        secreturl = site + '/v1/vaults/' + vaultid + '/items/' + secretid
+        result = requests.put(secreturl,headers=header,json=body,verify=True)
+        return result
+    else:   
+        secreturl = site + '/v1/vaults/' + vaultid + '/items'
+        result = requests.post(secreturl,headers=header,json=body,verify=True)
     return result
+
+def mapExistingSecrets(fqdn,vaultid,key):
+    existingSecrets = getOPSecrets(fqdn,vaultid,key)
+    secretMap = {}
+    for secret in existingSecrets:
+        secretDetail = getOPSecret(fqdn,vaultid,secret['id'],key)
+        if 'sections' in secretDetail:
+            for section in secretDetail['sections']:
+                if section['id'] == 'clavisId':
+                    clavisId = section['label']
+                    secretMap[clavisId] = secretDetail['id'] 
+    return secretMap
