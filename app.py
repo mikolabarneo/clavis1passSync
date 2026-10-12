@@ -1,10 +1,13 @@
 import os
 import sys
+import time
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from clavis_functions import buildClavisSecretForOnePass, getAllClavisFolders, getAllClavisSecrets, getClavisFolders
+from clavis_functions import (
+    ClavisAuthError, buildClavisSecretForOnePass, getAllClavisFolders, getAllClavisSecrets, getClavisFolders,
+)
 from onepass_functions import createUpdateOPSecret, getOPSecrets, getOPVaults, mapExistingSecrets
 
 app = Flask(__name__)
@@ -71,6 +74,13 @@ def build_clavis_tree(folders, secrets):
     return roots
 
 
+def clavis_token_works(fqdn, key):
+    try:
+        return getClavisFolders(fqdn, key, take=1) is not None
+    except ClavisAuthError:
+        return False
+
+
 def build_op_vaults(vaults):
     return sorted(
         (
@@ -126,7 +136,7 @@ def connect():
             onepassfqdn=onepassfqdn,
         )
 
-    if getClavisFolders(clavisfqdn, claviskey, take=1) is None:
+    if not clavis_token_works(clavisfqdn, claviskey):
         flash('Could not connect to Clavis. Check the address and token.', 'error')
         return render_template(
             'index.html',
@@ -171,12 +181,16 @@ def tree():
     clavisfqdn = session['clavisfqdn']
     claviskey = session['claviskey']
 
-    folders = getAllClavisFolders(clavisfqdn, claviskey)
+    try:
+        folders = getAllClavisFolders(clavisfqdn, claviskey)
+        secrets = getAllClavisSecrets(clavisfqdn, claviskey) if folders is not None else None
+    except ClavisAuthError:
+        flash('The Clavis token has expired. Connect again with a new token.', 'error')
+        return redirect(url_for('index'))
     if folders is None:
         flash('Could not fetch the Clavis folder list.', 'error')
         return redirect(url_for('dashboard'))
 
-    secrets = getAllClavisSecrets(clavisfqdn, claviskey)
     if secrets is None:
         flash('Could not fetch the Clavis item list.', 'error')
         return redirect(url_for('dashboard'))
@@ -241,31 +255,70 @@ def sync():
     onepassfqdn = session['onepassfqdn']
     onepasskey = session['onepasskey']
 
-    all_secrets = getAllClavisSecrets(clavisfqdn, claviskey)
-    if all_secrets is None:
-        return jsonify({'error': 'Could not fetch the Clavis secret list.'}), 502
-    folder_id_by_clavis_id = {str(s.get('id')): s.get('folderId') for s in all_secrets}
-
     opvaults = getOPVaults(onepassfqdn, onepasskey) or []
     vault_name = next((v.get('name') for v in opvaults if str(v.get('id')) == vault_id), '')
 
+    started = time.monotonic()
+    app.logger.debug('SYNC start: %d items, vault %s', len(clavis_ids), vault_id)
+
+    # One vault listing for the whole batch instead of one per item.
+    secret_map = mapExistingSecrets(onepassfqdn, vault_id, onepasskey)
+    app.logger.debug('SYNC vault map: %d tagged items in %.2fs', len(secret_map), time.monotonic() - started)
+
     results = []
-    for clavis_id in clavis_ids:
-        clavis_secret = buildClavisSecretForOnePass(
-            clavisfqdn, claviskey, clavis_id, folder_id_by_clavis_id.get(clavis_id), vault_id, vault_name,
-        )
+    for index, clavis_id in enumerate(clavis_ids):
+        item_started = time.monotonic()
+        try:
+            clavis_secret = buildClavisSecretForOnePass(clavisfqdn, claviskey, clavis_id, None, vault_id, vault_name)
+        except ClavisAuthError:
+            # The page pauses, asks for a new token (POST /clavis/token) and
+            # resends only the remaining ids, so finished items aren't redone.
+            app.logger.debug('SYNC stopped at item %s: Clavis token rejected', clavis_id)
+            return jsonify({
+                'error': 'clavis_token_expired',
+                'results': results,
+                'remaining': clavis_ids[index:],
+            }), 401
         if clavis_secret is None:
             results.append({'id': clavis_id, 'ok': False, 'error': 'Secret not found in Clavis.'})
             continue
 
-        response = createUpdateOPSecret(onepassfqdn, vault_id, onepasskey, clavis_secret)
+        clavis_done = time.monotonic()
+        response = createUpdateOPSecret(onepassfqdn, vault_id, onepasskey, clavis_secret, secret_map)
         ok = response is not None and 200 <= response.status_code < 300
         result = {'id': clavis_id, 'ok': ok, 'title': clavis_secret.title}
         if not ok:
             result['error'] = '1Password error ({}).'.format(response.status_code if response is not None else '?')
+            app.logger.debug(
+                'SYNC item %s failed: %s %s', clavis_id,
+                response.status_code if response is not None else '?',
+                response.text[:500] if response is not None else '',
+            )
+        app.logger.debug(
+            'SYNC item %s ok=%s clavis %.2fs, 1password %.2fs (total %.1fs)',
+            clavis_id, ok, clavis_done - item_started, time.monotonic() - clavis_done, time.monotonic() - started,
+        )
         results.append(result)
 
+    app.logger.debug('SYNC done: %d items in %.1fs', len(clavis_ids), time.monotonic() - started)
+
     return jsonify({'results': results})
+
+
+@app.route('/clavis/token', methods=['POST'])
+def clavis_token():
+    if 'clavisfqdn' not in session:
+        return jsonify({'error': 'not connected'}), 401
+
+    data = request.get_json(silent=True) or {}
+    token = (data.get('token') or '').strip()
+    if not token:
+        return jsonify({'error': 'token required'}), 400
+    if not clavis_token_works(session['clavisfqdn'], token):
+        return jsonify({'error': 'Clavis did not accept this token.'}), 400
+
+    session['claviskey'] = token
+    return jsonify({'ok': True})
 
 
 @app.route('/logout', methods=['POST'])
@@ -275,4 +328,8 @@ def logout():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(
+        host=os.environ.get('FLASK_RUN_HOST', '127.0.0.1'),
+        port=int(os.environ.get('FLASK_RUN_PORT', '5000')),
+        debug=True,
+    )

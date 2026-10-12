@@ -1,10 +1,22 @@
 import base64
+import sys
 
 import requests
 
 from classes import folder as clavisFolderClass, secret as clavisSecretClass, secretField as clavisSecretFieldClass
 
 CERTIFICATE_TEMPLATE_NAME = 'Certificate'
+
+class ClavisAuthError(Exception):
+    """Clavis rejected the token (HTTP 401), usually because it expired.
+
+    Unlike other failures this is raised rather than returned as None, so a
+    long sync can tell "token expired" apart from "secret not found".
+    """
+
+def _raiseOnAuthError(response):
+    if response.status_code == 401:
+        raise ClavisAuthError()
 
 def getClavisSecrets(fqdn,key,folderid=None, take=1000,skip=0):
     header = {}
@@ -16,6 +28,7 @@ def getClavisSecrets(fqdn,key,folderid=None, take=1000,skip=0):
     if folderid:
         secretsurl += '&filter.folderId=' + str(folderid)+ '&filter.includeSubfolders=true'
     secrets = requests.get(secretsurl,headers=header,verify=True)
+    _raiseOnAuthError(secrets)
     if secrets.status_code != 200:
         return None
     return secrets.json()
@@ -28,6 +41,7 @@ def getClavisSecret(fqdn,secretid,key):
     site = 'https://'+fqdn
     secreturl = site + '/api/v2/secrets/' + str(secretid)
     secret = requests.get(secreturl,headers=header,verify=True)
+    _raiseOnAuthError(secret)
     if secret.status_code != 200:
         return None
     return secret.json()
@@ -39,6 +53,7 @@ def getClavisSecretField(fqdn,secretid,slug,key):
     site = 'https://'+fqdn
     fieldurl = site + '/api/v1/secrets/' + str(secretid) + '/fields/' + slug
     result = requests.get(fieldurl,headers=header,verify=True)
+    _raiseOnAuthError(result)
     if result.status_code != 200:
         return None
     return result.content
@@ -54,6 +69,7 @@ def getClavisFolders(fqdn,key,id=None, take=1000, skip=0):
     else:
         foldersurl = site + '/api/v1/folders/' + str(id) 
     folders = requests.get(foldersurl,headers=header,verify=True)
+    _raiseOnAuthError(folders)
     if folders.status_code != 200:
         return None
     return folders.json()
@@ -187,7 +203,13 @@ def buildClavisSecretForOnePass(fqdn,key,clavisId,folderId,vaultId,vaultName):
     clavisSecret.clavisId = secretdetails['id']
     clavisSecret.title = secretdetails['name']
 
-    if folderId is not None:
+    # The detail response carries folderId, so callers needn't list every
+    # secret just to look it up.
+    if folderId is None:
+        folderId = secretdetails.get('folderId')
+    if folderId is None:
+        print('WARNING: Clavis secret {} has no folderId, syncing without folder tags.'.format(clavisId), file=sys.stderr)
+    else:
         secretfolder = getClavisFolders(fqdn,key,folderId)
         if secretfolder:
             clavisFolder = clavisFolderClass()

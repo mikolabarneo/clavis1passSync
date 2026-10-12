@@ -160,6 +160,10 @@ spec:
   routes:
     - conditions:
       - prefix: /
+      # Contour's default response timeout is 15s; a /sync batch can take
+      # longer. Keep this at or above uwsgi.ini harakiri (60s).
+      timeoutPolicy:
+        response: 90s
       services:
       - name: clavis1passsync
         port: 80

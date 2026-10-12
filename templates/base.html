@@ -85,6 +85,71 @@
         .action-toolbar #sync-btn {
             margin-left: auto;
         }
+        .action-toolbar #stop-sync-btn {
+            background: var(--error-bg);
+            color: var(--error-text);
+            border: 1px solid var(--error-text);
+        }
+        .action-toolbar #stop-sync-btn:hover {
+            background: var(--card);
+        }
+        .action-toolbar [hidden] {
+            display: none;
+        }
+        .sync-progress {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: -8px 0 20px;
+        }
+        .sync-progress[hidden] {
+            display: none;
+        }
+        .sync-progress progress {
+            flex: 1 1 auto;
+            min-width: 0;
+            height: 10px;
+            accent-color: var(--accent);
+        }
+        .token-prompt {
+            margin: -8px 0 20px;
+            padding: 12px 14px;
+            border: 1px solid var(--error-text);
+            border-radius: 8px;
+            background: var(--error-bg);
+            color: var(--error-text);
+            font-size: 0.85rem;
+        }
+        .token-prompt[hidden] {
+            display: none;
+        }
+        .token-prompt p {
+            margin: 0 0 8px;
+        }
+        .token-prompt-row {
+            display: flex;
+            gap: 8px;
+        }
+        .token-prompt-row input {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        .token-prompt-row button {
+            width: auto;
+            flex: none;
+            padding: 8px 16px;
+        }
+        .token-prompt .token-prompt-error {
+            margin: 8px 0 0;
+            font-weight: 600;
+        }
+        .sync-progress-text {
+            flex: none;
+            color: var(--muted);
+            font-size: 0.8rem;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
         @media (max-width: 720px) {
             .split { flex-direction: column; }
             .split > .op-col {
@@ -95,7 +160,9 @@
                 padding-left: 0;
                 padding-top: 20px;
             }
-            .action-toolbar #sync-btn {
+            .action-toolbar #sync-btn,
+            .action-toolbar #sync-all-btn,
+            .action-toolbar #stop-sync-btn {
                 margin-left: 0;
                 width: 100%;
             }

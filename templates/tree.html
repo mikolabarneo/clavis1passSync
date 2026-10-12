@@ -5,6 +5,22 @@
         <button type="button" id="apply-match" title="Overlay the selected Clavis items onto the 1Password list">Apply ›</button>
         <button type="button" id="reset-match" title="Clear the overlay">‹‹ Reset</button>
         <button type="button" id="sync-btn" class="sync-button" title="Create/update items in 1Password">Sync</button>
+        <button type="button" id="sync-all-btn" class="sync-button" title="Create/update every Clavis secret in the selected vault">Sync all</button>
+        <button type="button" id="stop-sync-btn" title="Stop syncing after the current request" hidden>Stop</button>
+    </div>
+
+    <div class="sync-progress" id="sync-progress" hidden>
+        <progress id="sync-progress-bar" value="0" max="1"></progress>
+        <span class="sync-progress-text" id="sync-progress-text"></span>
+    </div>
+
+    <div class="token-prompt" id="token-prompt" hidden>
+        <p>The Clavis token has expired. Paste a new token to continue; items already synced are kept.</p>
+        <div class="token-prompt-row">
+            <input type="password" id="token-input" autocomplete="off" placeholder="New Clavis API token">
+            <button type="button" id="token-resume-btn">Resume</button>
+        </div>
+        <p class="token-prompt-error" id="token-error" hidden></p>
     </div>
 
     <div class="split">
@@ -308,6 +324,192 @@
     resetBtn.addEventListener('click', resetOverlay);
 
     var syncBtn = document.getElementById('sync-btn');
+    var syncAllBtn = document.getElementById('sync-all-btn');
+    var stopBtn = document.getElementById('stop-sync-btn');
+    var progressEl = document.getElementById('sync-progress');
+    var progressBar = document.getElementById('sync-progress-bar');
+    var progressText = document.getElementById('sync-progress-text');
+
+    // Sync in small batches: one big request outlives the ingress (Contour)
+    // and uWSGI harakiri timeouts, since each item takes a few seconds.
+    var SYNC_BATCH_SIZE = 5;
+    var currentSync = null;
+
+    function setBusy(busy) {
+        [syncBtn, syncAllBtn, applyBtn, resetBtn, select].forEach(function (el) { el.disabled = busy; });
+    }
+
+    function showProgress(done, total) {
+        progressEl.hidden = false;
+        progressBar.max = total;
+        progressBar.value = done;
+        progressText.textContent = done + ' / ' + total;
+    }
+
+    // kindByClavisId maps each Clavis id to 'create' or 'update'.
+    function runSync(vaultId, kindByClavisId) {
+        var clavisIds = Object.keys(kindByClavisId);
+        var batches = [];
+        for (var i = 0; i < clavisIds.length; i += SYNC_BATCH_SIZE) {
+            batches.push(clavisIds.slice(i, i + SYNC_BATCH_SIZE));
+        }
+
+        var state = { stopped: false, controller: null, resumeWaiting: null };
+        currentSync = state;
+        var created = 0, updated = 0, failed = 0, done = 0;
+
+        setBusy(true);
+        stopBtn.hidden = false;
+        stopBtn.disabled = false;
+        showProgress(0, clavisIds.length);
+        hintEl.textContent = 'Syncing…';
+        hintEl.hidden = false;
+
+        function syncBatch(ids) {
+            if (state.stopped) return Promise.resolve();
+            var counted = 0;
+
+            function countResults(results) {
+                results.forEach(function (res) {
+                    counted++;
+                    done++;
+                    if (!res.ok) { failed++; return; }
+                    if (kindByClavisId[res.id] === 'create') created++; else updated++;
+                });
+            }
+
+            state.controller = new AbortController();
+            return fetch('/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vault_id: vaultId, clavis_ids: ids }),
+                signal: state.controller.signal,
+            })
+                .then(function (r) {
+                    if (r.status === 401) {
+                        return r.json().then(function (data) {
+                            if (data.error !== 'clavis_token_expired') throw new Error('not connected');
+                            // Keep what this batch finished, wait for a new
+                            // token, then resend only the rest of the batch.
+                            countResults(data.results);
+                            showProgress(done, clavisIds.length);
+                            return waitForToken(state).then(function () {
+                                return syncBatch(data.remaining);
+                            });
+                        });
+                    }
+                    if (!r.ok) throw new Error('request failed (' + r.status + ')');
+                    return r.json().then(function (data) { countResults(data.results); });
+                })
+                .catch(function () {
+                    // A stopped batch has an unknown outcome, so it isn't counted.
+                    // Any other failure: count the rest of the batch as failed and keep going.
+                    if (state.stopped) return;
+                    failed += ids.length - counted;
+                    done += ids.length - counted;
+                })
+                .then(function () {
+                    showProgress(done, clavisIds.length);
+                });
+        }
+
+        return batches.reduce(function (chain, ids) {
+            return chain.then(function () { return syncBatch(ids); });
+        }, Promise.resolve())
+            .then(function () {
+                var summary = (state.stopped ? 'Stopped: ' : 'Done: ') +
+                    created + ' created, ' + updated + ' updated';
+                if (failed > 0) summary += ', ' + failed + ' failed';
+                if (state.stopped) {
+                    summary += ', ' + (clavisIds.length - done) + ' not synced' +
+                        ' (the request in progress may still finish on the server)';
+                }
+                return loadItems(vaultId).then(function () {
+                    // loadItems rewrites the hint; show the summary after it.
+                    hintEl.textContent = summary;
+                    hintEl.hidden = false;
+                });
+            })
+            .catch(function () {
+                hintEl.textContent = 'Failed to sync.';
+                hintEl.hidden = false;
+            })
+            .finally(function () {
+                currentSync = null;
+                stopBtn.hidden = true;
+                setBusy(false);
+            });
+    }
+
+    var tokenPrompt = document.getElementById('token-prompt');
+    var tokenInput = document.getElementById('token-input');
+    var tokenResumeBtn = document.getElementById('token-resume-btn');
+    var tokenError = document.getElementById('token-error');
+
+    function hideTokenPrompt() {
+        tokenPrompt.hidden = true;
+        tokenInput.value = '';
+        tokenError.hidden = true;
+    }
+
+    // Resolves once a new token is accepted, or when the sync is stopped.
+    function waitForToken(state) {
+        return new Promise(function (resolve) {
+            state.resumeWaiting = function () {
+                state.resumeWaiting = null;
+                hideTokenPrompt();
+                resolve();
+            };
+            tokenPrompt.hidden = false;
+            tokenInput.focus();
+            hintEl.textContent = 'Paused: waiting for a new Clavis token.';
+            hintEl.hidden = false;
+        });
+    }
+
+    function submitToken() {
+        var token = tokenInput.value.trim();
+        if (!currentSync || !currentSync.resumeWaiting || !token) return;
+        tokenResumeBtn.disabled = true;
+        tokenError.hidden = true;
+
+        fetch('/clavis/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token }),
+        })
+            .then(function (r) {
+                return r.json().then(function (data) {
+                    if (!r.ok) throw new Error(data.error || 'request failed');
+                });
+            })
+            .then(function () {
+                hintEl.textContent = 'Syncing…';
+                if (currentSync && currentSync.resumeWaiting) currentSync.resumeWaiting();
+            })
+            .catch(function (err) {
+                tokenError.textContent = err.message === 'request failed'
+                    ? 'Could not check the token.' : err.message;
+                tokenError.hidden = false;
+            })
+            .finally(function () {
+                tokenResumeBtn.disabled = false;
+            });
+    }
+
+    tokenResumeBtn.addEventListener('click', submitToken);
+    tokenInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') submitToken();
+    });
+
+    stopBtn.addEventListener('click', function () {
+        if (!currentSync) return;
+        currentSync.stopped = true;
+        if (currentSync.controller) currentSync.controller.abort();
+        if (currentSync.resumeWaiting) currentSync.resumeWaiting();
+        stopBtn.disabled = true;
+        hintEl.textContent = 'Stopping…';
+    });
 
     syncBtn.addEventListener('click', function () {
         var vaultId = select.value;
@@ -328,14 +530,32 @@
         var kindByClavisId = {};
         newCards.forEach(function (c) { kindByClavisId[c.dataset.clavisId] = 'create'; });
         matchCards.forEach(function (c) { kindByClavisId[c.dataset.clavisId] = 'update'; });
-        var clavisIds = Object.keys(kindByClavisId);
+        runSync(vaultId, kindByClavisId);
+    });
 
-        syncBtn.disabled = true;
-        syncBtn.textContent = 'Syncing…';
-        hintEl.textContent = 'Syncing…';
+    syncAllBtn.addEventListener('click', function () {
+        var vaultId = select.value;
+        if (!vaultId) {
+            hintEl.textContent = 'Select a vault first.';
+            hintEl.hidden = false;
+            return;
+        }
+
+        var clavisIds = [];
+        document.querySelectorAll('#clavis-tree input.tree-checkbox[data-type="secret"]').forEach(function (cb) {
+            if (clavisIds.indexOf(cb.dataset.id) === -1) clavisIds.push(cb.dataset.id);
+        });
+        if (clavisIds.length === 0) {
+            hintEl.textContent = 'There are no Clavis secrets to sync.';
+            hintEl.hidden = false;
+            return;
+        }
+
+        setBusy(true);
+        hintEl.textContent = 'Checking which items already exist in 1Password…';
         hintEl.hidden = false;
 
-        fetch('/sync', {
+        fetch('/op/match', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ vault_id: vaultId, clavis_ids: clavisIds }),
@@ -344,25 +564,28 @@
                 if (!r.ok) throw new Error('request failed');
                 return r.json();
             })
-            .then(function (data) {
-                var created = 0, updated = 0, failed = 0;
-                data.results.forEach(function (res) {
-                    if (!res.ok) { failed++; return; }
-                    if (kindByClavisId[res.id] === 'create') created++; else updated++;
+            .then(function (result) {
+                var kindByClavisId = {};
+                var toCreate = 0, toUpdate = 0;
+                clavisIds.forEach(function (id) {
+                    if (result.matched[id]) { kindByClavisId[id] = 'update'; toUpdate++; }
+                    else { kindByClavisId[id] = 'create'; toCreate++; }
                 });
-                var summary = 'Done: ' + created + ' created, ' + updated + ' updated';
-                if (failed > 0) summary += ', ' + failed + ' failed';
-                hintEl.textContent = summary;
-                hintEl.hidden = false;
-                return loadItems(vaultId);
+
+                var vaultName = select.options[select.selectedIndex].text;
+                var question = 'Sync all ' + clavisIds.length + ' Clavis secrets to "' + vaultName + '"?\n\n' +
+                    toCreate + ' will be created, ' + toUpdate + ' will be updated.';
+                if (!window.confirm(question)) {
+                    setBusy(false);
+                    hintEl.textContent = 'Sync all cancelled.';
+                    return;
+                }
+                return runSync(vaultId, kindByClavisId);
             })
             .catch(function () {
-                hintEl.textContent = 'Failed to sync.';
+                setBusy(false);
+                hintEl.textContent = 'Failed to match against 1Password.';
                 hintEl.hidden = false;
-            })
-            .finally(function () {
-                syncBtn.disabled = false;
-                syncBtn.textContent = 'Sync';
             });
     });
 })();

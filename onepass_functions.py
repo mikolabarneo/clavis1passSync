@@ -37,8 +37,9 @@ def getOPSecret(fqdn,vaultid,secretid,key):
     secret = requests.get(secreturl,headers=header,verify=True)
     return secret.json()
 
-def createUpdateOPSecret(fqdn,vaultid,key,secret):
-    secretMap = mapExistingSecrets(fqdn,vaultid,key)
+def createUpdateOPSecret(fqdn,vaultid,key,secret,secretMap=None):
+    if secretMap is None:
+        secretMap = mapExistingSecrets(fqdn,vaultid,key)
     header = {}
     header['Content-Type'] = 'application/json;'
     header['Accept'] = '*/*'
@@ -47,6 +48,9 @@ def createUpdateOPSecret(fqdn,vaultid,key,secret):
     site = 'https://'+fqdn
     if str(secret.clavisId) in secretMap:
         secretid = secretMap[str(secret.clavisId)]
+        # Connect rejects a PUT whose body has no id matching the URL
+        # ("Item body does not match Item path").
+        body['id'] = secretid
         secreturl = site + '/v1/vaults/' + vaultid + '/items/' + secretid
         result = requests.put(secreturl,headers=header,json=body,verify=True)
         return result
